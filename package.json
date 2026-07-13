@@ -1,0 +1,16 @@
+{
+  "name": "rolldown-pure-set-foreach-repro",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "build:rolldown": "node scripts/build-rolldown.mjs",
+    "build:esbuild-toplevel": "node scripts/build-esbuild-toplevel.mjs",
+    "run-and-check": "node scripts/run-and-check.mjs",
+    "demo": "npm run build:rolldown && npm run build:esbuild-toplevel && npm run run-and-check"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "rolldown": "^1.1.3"
+  }
+}
