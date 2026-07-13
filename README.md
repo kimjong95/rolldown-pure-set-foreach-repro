@@ -100,13 +100,32 @@ the `changedProps` object passed in) are unobservable.
 
 Our real production regression did happen, and reverting to a plain
 `for...of` loop did fix it -- but we have not been able to reproduce the
-chain actually being eliminated, with Rolldown alone, in the shape that
-matches how our code is really used (called, result relied upon by the
-caller). The exact tool and conditions that eliminated the code in the
-original staging build remain unconfirmed. If you can get the chain above
-to actually disappear, or know what additional condition (minification
-settings, a different downstream bundler, module concatenation, something
-else) is required, please comment on the issue.
+chain actually being eliminated, in the shape that matches how our code is
+really used (called, result relied upon by the caller), with any tool we
+tried:
+
+| Tool / configuration | Result |
+|---|---|
+| Rolldown, no minify | chain survives |
+| Rolldown, `-m` (minify) | chain survives |
+| Rolldown, two-stage rebuild (build once, re-bundle+minify the output) | chain survives |
+| esbuild, `bundle: true` + tree shaking | chain survives (only removes it for a genuinely-unused top-level binding, which doesn't match our shape) |
+| webpack + Terser, aggressive `compress` (`reduce_funcs`, `toplevel`, `passes: 3`) | chain survives (function gets inlined into the call site, `forEach` does not) |
+| webpack + Terser, `unsafe: true` + `unsafe_methods: true` | chain survives |
+| `@swc/core` `minify()` (the actual minifier Next.js uses by default in our real apps -- not webpack's Terser) | chain survives |
+
+Six different tools/configurations, one consistent result. This is fairly
+strong evidence that single-file, single-scope minification by any
+mainstream tool does not eliminate this pattern. Our current best guess is
+that the real trigger requires something only present at the scale of our
+actual app build -- e.g. cross-module scope hoisting across the hundreds
+of files in `packages/engine/editor` when it's consumed by a real Next.js
+production build (`next build`), which we have not yet reproduced (it
+requires building a large chunk of our private monorepo end to end, not a
+minimal standalone repro).
+
+If you can get the chain above to actually disappear with any tool, or
+know what additional condition is required, please comment on the issue.
 
 ## What's in this repo
 
