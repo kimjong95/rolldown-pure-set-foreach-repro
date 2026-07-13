@@ -1,0 +1,11 @@
+{
+  "name": "vite-app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test": "vite build && node dist/main.js"
+  },
+  "dependencies": { "@repro/engine": "file:../engine" },
+  "devDependencies": { "vite": "^6.0.0" }
+}

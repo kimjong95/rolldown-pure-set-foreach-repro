@@ -1,0 +1,9 @@
+{
+  "name": "@repro/engine",
+  "version": "0.0.1",
+  "type": "module",
+  "module": "./dist/memento.js",
+  "main": "./dist/memento.js",
+  "exports": { ".": "./dist/memento.js" },
+  "sideEffects": false
+}

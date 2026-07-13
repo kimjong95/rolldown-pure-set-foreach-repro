@@ -1,0 +1,7 @@
+{
+  // The global User setting hides "*/dist/*"; this repo's dist output IS the
+  // evidence for the repro, so un-hide it for this workspace only.
+  "files.exclude": {
+    "*/dist/*": false
+  }
+}

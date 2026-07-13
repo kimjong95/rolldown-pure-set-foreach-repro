@@ -4,7 +4,9 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "rolldown -c rolldown.config.js"
+    "build:engine": "rolldown engine/src/memento.js --format es --file engine/dist/memento.js",
+    "build": "npm run build:engine && npm --prefix vite-app run build && npm --prefix webpack-app run build && npm --prefix webpack-swc-minify-app run build",
+    "apps": "node check-apps.mjs"
   },
   "devDependencies": {
     "rolldown": "^1.1.3"
