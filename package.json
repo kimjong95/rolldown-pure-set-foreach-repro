@@ -4,10 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "rolldown -c rolldown.config.js",
-    "build:consumer": "rolldown -c rolldown.consumer.config.js",
-    "check": "node scripts/check-consumer.mjs",
-    "demo": "npm run build && npm run build:consumer && npm run check"
+    "build": "rolldown -c rolldown.config.js"
   },
   "devDependencies": {
     "rolldown": "^1.1.3"

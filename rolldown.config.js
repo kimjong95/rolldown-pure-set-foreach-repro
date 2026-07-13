@@ -1,5 +1,5 @@
 export default {
-  input: 'src/pure-set-foreach.js',
+  input: 'src/consumer-unused-result.js',
   output: {
     dir: 'dist',
     format: 'es',
