@@ -5,9 +5,9 @@
   "type": "module",
   "scripts": {
     "build": "rolldown -c rolldown.config.js",
-    "build:toplevel": "rolldown -c rolldown.toplevel.config.js",
-    "check": "node scripts/check-dist.mjs",
-    "demo": "npm run build && npm run build:toplevel && npm run check"
+    "build:consumer": "rolldown -c rolldown.consumer.config.js",
+    "check": "node scripts/check-consumer.mjs",
+    "demo": "npm run build && npm run build:consumer && npm run check"
   },
   "devDependencies": {
     "rolldown": "^1.1.3"

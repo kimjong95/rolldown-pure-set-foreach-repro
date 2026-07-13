@@ -3,35 +3,43 @@
 Reproduction material for [rolldown/rolldown#10247](https://github.com/rolldown/rolldown/issues/10247).
 
 Every claim below is backed by a real `rolldown -c <config>` CLI build that
-writes actual files to `dist/` / `dist-toplevel/` -- nothing here calls the
+writes actual files to `dist/` / `dist-consumer/` -- nothing here calls the
 rolldown bundler API in-process and prints a string. Build it, then open
 the file yourself.
 
-This README is also split into **what we have actually proven** and **what
-we have not** -- an earlier draft blurred that line. See "What we have NOT
-proven" before drawing conclusions from this repo.
+An earlier version of this repo included a separate `toplevel-elimination.js`
+demo (a module-top-level `let x = /* @__PURE__ */ new Set(...).forEach(cb)`
+that Rolldown does eliminate). That demo has been **removed** -- it doesn't
+match how our real code is shaped (our function is called, not left as an
+unused top-level binding), so it doesn't verify anything relevant to our
+actual bug. This repo now only contains the two things that matter.
 
 ## The pattern
 
 ```js
-const allKeys = new Set([...Object.keys(a), ...Object.keys(b)]);
+export function applyRestore(currentProps, targetProps, changedProps, isEqual) {
+  const allKeys = new Set([
+    ...Object.keys(currentProps),
+    ...Object.keys(targetProps),
+  ]);
 
-allKeys.forEach((key) => {
-  // ...mutate some outer variable...
-});
+  allKeys.forEach((key) => {
+    if (key === 'text') return;
+    if (!isEqual(currentProps[key], targetProps[key])) {
+      changedProps[key] = targetProps[key];
+    }
+  });
+
+  return changedProps;
+}
 ```
 
-Rolldown (via oxc) automatically marks `new Set(array)` as `/* @__PURE__ */`
-(mirrors an esbuild optimization -- see
-[esbuild CHANGELOG 2021, "Mark `Set` and `Map` with array arguments as pure"](https://github.com/evanw/esbuild/blob/main/CHANGELOG-2021.md),
-[esbuild/esbuild#1791](https://github.com/evanw/esbuild/issues/1791)).
-When the resulting binding is immediately chained into `.forEach(cb)`, the
-annotation ends up positioned at the head of the whole chain, not just the
-`new Set(...)` call.
+This is `src/pure-set-foreach.js`, a reduced version of the real function
+(`applyRestoreSnapshot` in `NodeTextCommandMemento.ts`) that triggered our
+production regression -- see `real-world-evidence/applyRestoreSnapshot.dist.js`
+for the actual, unmodified compiled output from our private monorepo.
 
-## What we have proven
-
-### 1. Rolldown really inserts this annotation in this exact position
+## 1. Rolldown auto-inserts `/* @__PURE__ */` in front of the chain -- confirmed
 
 ```sh
 npm install
@@ -39,9 +47,7 @@ npm run build
 cat dist/pure-set-foreach.js
 ```
 
-`rolldown.config.js` points at `src/pure-set-foreach.js` (the un-annotated
-original -- no `/* @__PURE__ */` anywhere in it) and writes to `dist/`.
-Actual contents of `dist/pure-set-foreach.js` after the build:
+Actual contents of `dist/pure-set-foreach.js`:
 
 ```js
 function applyRestore(currentProps, targetProps, changedProps, isEqual) {
@@ -53,124 +59,103 @@ function applyRestore(currentProps, targetProps, changedProps, isEqual) {
 }
 ```
 
-Nobody wrote that comment. Rolldown inserted it during the real CLI build
-and inlined the `allKeys` binding, so the marker sits at the head of the
-`.forEach(cb)` chain, not just on `new Set(...)`.
+Nobody wrote that comment. Rolldown inserted it during the build and
+inlined the `allKeys` binding, positioning the annotation at the head of
+the whole `.forEach(cb)` chain instead of only on `new Set(...)`.
 
-### 2. This is not a constructed toy -- it's what our real production build outputs today
+`real-world-evidence/applyRestoreSnapshot.dist.js` confirms this is not a
+constructed toy: it's a verbatim excerpt from our real
+`packages/engine/editor` package's actual `vite build` output (commit
+`75d9a29505959993f7ec815907ed82a4af6dea38`, branch `release/26.707`,
+2026-07-13) -- same annotation, same chain position, same shape, with the
+real field names.
 
-`real-world-evidence/applyRestoreSnapshot.dist.js` is a **verbatim excerpt**
-copied out of the actual compiled output of `packages/engine/editor` in
-our private monorepo, produced by that package's own real `vite build`
-script (the same command our CI runs), on commit
-`75d9a29505959993f7ec815907ed82a4af6dea38` (branch `release/26.707`,
-2026-07-13) -- before the fix from the linked issue was applied. Same
-shape, same auto-inserted annotation, same chain position -- just with the
-real field names (`currentProps`, `targetProps`, `node.setProps(...)`)
-instead of our minimal repro's placeholders.
+## 2. Does the chain actually disappear when called the way real code calls it? -- NOT reproduced
 
-### 3. This class of PURE-chain elimination is real and rolldown itself does it, not just esbuild
+This is the part that would need to be true for our root-cause theory to
+hold, and **we have not been able to make it happen.**
+
+`src/consumer-unused-result.js` calls `applyRestore` exactly the way real
+code calls `applyRestoreSnapshot`: as a plain call, with its return value
+never captured or used.
+
+```js
+import { applyRestore } from './pure-set-foreach.js';
+
+applyRestore(
+  { boundingBox: { width: 999 }, text: 'edited' },
+  { boundingBox: { width: 100 }, text: 'original' },
+  {},
+  isEqual
+);
+```
 
 ```sh
-npm run build:toplevel
-cat dist-toplevel/toplevel-elimination.js
+npm run build:consumer
 npm run check
 ```
 
-`src/toplevel-elimination.js` defines a controlled pair at module top
-level:
+Actual contents of `dist-consumer/consumer-unused-result.js` after
+`rolldown -c rolldown.consumer.config.js`:
 
 ```js
-let yes = /* @__PURE__ */ new Set([1, 2, 3]).forEach((x) => {
-  globalThis.sideEffects.push(['yes', x]);   // argument: a bare function literal
-});
-
-let no = /* @__PURE__ */ new Set([4, 5, 6]).forEach(makeHandler());
-                                                    // argument: the RESULT OF A CALL
-```
-
-Actual contents of `dist-toplevel/toplevel-elimination.js` after
-`rolldown -c rolldown.toplevel.config.js`:
-
-```js
-globalThis.sideEffects = [];
-function readSideEffects() {
-	return globalThis.sideEffects;
+function applyRestore(currentProps, targetProps, changedProps, isEqual) {
+	(/* @__PURE__ */ new Set([...Object.keys(currentProps), ...Object.keys(targetProps)])).forEach((key) => {
+		if (key === "text") return;
+		if (!isEqual(currentProps[key], targetProps[key])) changedProps[key] = targetProps[key];
+	});
+	return changedProps;
 }
-export { readSideEffects };
-```
-
-Both `yes` and `no` are gone -- including `makeHandler` itself. `npm run
-check` imports this real dist file (not a re-built in-memory string) and
-confirms `readSideEffects()` returns `[]`: neither side effect ever ran.
-(Rolldown removes `no` too, unlike the naive "argument is a call, so keep
-it" heuristic esbuild uses -- rolldown's analysis apparently sees that
-`makeHandler()` itself has no side effects.)
-
-## What we have NOT proven
-
-**The `yes`/`no` axis above (function literal vs. call result) is not
-what varies in our real production code.** Every `.forEach()` callback in
-our actual source (`NodeTextCommandMemento.ts`, see
-`real-world-evidence/applyRestoreSnapshot.dist.js`) is a bare arrow
-function literal -- we never pass a function-call result. So section 3
-proves the general elimination mechanism exists and that rolldown itself
-performs it, but **it does not reproduce or explain our specific
-regression** on its own -- it's a real but different trigger condition
-(a genuinely unused top-level binding), not the one in our code (a
-`.forEach()` inside a function that is actually called, whose side
-effects the caller relies on).
-
-We tried, and failed, to get rolldown (or esbuild, or Terser with
-`unsafe: true`) to eliminate the chain in the shape that actually matches
-our bug -- inside a called function whose effects are used by the caller:
-
-```js
-function applyRestore(changedProps) {
-  const allKeys = new Set([1, 2, 3]);
-  allKeys.forEach((key) => { changedProps[key] = key * 10; });
+function isEqual(a, b) {
+	return JSON.stringify(a) === JSON.stringify(b);
 }
-const result = {};
-applyRestore(result);
-console.log(result); // caller actually uses the mutation
+applyRestore({
+	boundingBox: { width: 999 },
+	text: "edited"
+}, {
+	boundingBox: { width: 100 },
+	text: "original"
+}, {}, isEqual);
 ```
 
-None of the three tools removed the `forEach` here. **Our best current
-guess** is that the real regression required an extra step we have not
-isolated in this repo -- most likely function inlining by a downstream
-minifier (e.g. Terser, used via webpack in our actual Next.js app builds,
-which unlike esbuild/rolldown's minifiers does inline single-call-site
-functions under some settings) collapsing `applyRestoreSnapshot`'s body
-into its call site during the final app build, at which point the
-`forEach` could start looking like an eliminable, effectively-unused
-statement. We have not reproduced that exact tool chain in isolation. If
-anyone recognizes the actual mechanism, we'd like to know.
+**The whole function, including the `Set`+`forEach` chain, survives.**
+Rolldown does not eliminate `applyRestore`'s body here, because the call
+itself isn't annotated as pure and the function is genuinely invoked --
+there is nothing in this configuration that tells Rolldown the call's
+effects (mutating the `changedProps` object passed in) are unobservable.
+
+## Where this leaves us
+
+- **Confirmed, with real production evidence**: Rolldown auto-generates a
+  `/* @__PURE__ */` annotation positioned at the head of this exact
+  `Set`+`forEach` chain, in our actual codebase, today.
+- **Not confirmed**: that this annotation, on its own, causes the chain to
+  be silently eliminated when used the way our real code uses it (called,
+  result relied upon by the caller). We could not reproduce that with
+  Rolldown alone, at any build stage tested here.
+
+Our real production regression did happen, and reverting to a plain
+`for...of` loop did fix it -- but the exact tool and conditions that
+eliminated the code in the original staging build remain unconfirmed. If
+you can reproduce section 2 actually disappearing, or know what
+additional condition (minification settings, a different downstream
+bundler, module concatenation, something else) is required, please
+comment on the issue.
 
 ## What's in this repo
 
 | File | What it is |
 |---|---|
-| `rolldown.config.js` | Real rolldown build config for section 1 |
-| `src/pure-set-foreach.js` | Un-annotated source for section 1 |
-| `real-world-evidence/applyRestoreSnapshot.dist.js` | Real compiled output copied from our private monorepo's actual build (section 2) |
-| `rolldown.toplevel.config.js` | Real rolldown build config for section 3 |
-| `src/toplevel-elimination.js` | Un-annotated source for section 3 |
-| `scripts/check-dist.mjs` | Imports the already-built `dist-toplevel/` output and asserts on it -- does not call any bundler API |
+| `src/pure-set-foreach.js` | The reduced real-world pattern |
+| `rolldown.config.js` | Builds it standalone (section 1) |
+| `real-world-evidence/applyRestoreSnapshot.dist.js` | Real compiled output from our private monorepo's actual build |
+| `src/consumer-unused-result.js` | Calls `applyRestore` the way real code does -- return value unused (section 2) |
+| `rolldown.consumer.config.js` | Builds the consumer together with `pure-set-foreach.js` |
+| `scripts/check-consumer.mjs` | Reads the already-built `dist-consumer/` output and reports whether the chain is still present |
 
 ## Run everything
 
 ```sh
 npm install
-npm run demo    # build, build:toplevel, then check -- all real CLI builds
+npm run demo    # build, build:consumer, then check -- all real CLI builds
 ```
-
-## Why this is filed as a docs request, not a bug
-
-Both individual behaviors -- auto-marking known globals as pure, and PURE
-extending through a chained call whose argument is provably
-side-effect-free -- are intentional, tested, Rollup/esbuild-compatible
-behavior. See the full discussion in
-[rolldown/rolldown#10247](https://github.com/rolldown/rolldown/issues/10247)
-for the complete reasoning and links, including the open question of
-whether the narrower composition (auto-generated annotation + mutating
-chain) deserves special handling.
